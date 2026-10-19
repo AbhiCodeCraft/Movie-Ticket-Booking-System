@@ -3,3 +3,7 @@ node_modules/
 .npm-cache/
 coverage/
 .local/
+dist/
+test-results/
+playwright-report/
+frontend/.e2e-state.json

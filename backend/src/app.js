@@ -1,10 +1,11 @@
 import express from 'express';
+import './db/types.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { authenticate } from './middleware/auth.js';
 import { errorHandler } from './middleware/errors.js';
-import { ApiError, required } from './utils/errors.js';
+import { ApiError } from './utils/errors.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { catalogRoutes } from './modules/catalog/routes.js';
 import { id, listInput } from './modules/catalog/validation.js';

@@ -12,7 +12,7 @@
     "migrate": "node --env-file=.env src/db/migrate.js",
     "seed": "node --env-file=.env src/db/seeds/catalog.js",
     "seed:admin": "node --env-file=.env src/db/seeds/admin.js",
-    "test": "node --env-file=.env --test --test-concurrency=1 tests/*.test.js"
+    "test": "node --env-file=.env --test --test-concurrency=1"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

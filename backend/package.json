@@ -1,0 +1,15 @@
+{
+  "name": "ticket-booking-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node --env-file=.env src/server.js",
+    "dev": "node --watch --env-file=.env src/server.js",
+    "migrate": "node --env-file=.env src/db/migrate.js",
+    "seed": "node --env-file=.env src/db/seeds/catalog.js",
+    "seed:admin": "node --env-file=.env src/db/seeds/admin.js",
+    "test": "node --env-file=.env --test --test-concurrency=1 tests/*.test.js"
+  }
+}

@@ -1,0 +1,43 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import { authenticate } from './middleware/auth.js';
+import { errorHandler } from './middleware/errors.js';
+import { ApiError, required } from './utils/errors.js';
+import { authRoutes } from './modules/auth/routes.js';
+import { catalogRoutes } from './modules/catalog/routes.js';
+import { id, listInput } from './modules/catalog/validation.js';
+import movies from './modules/movies/definition.js';
+import theatres from './modules/theatres/definition.js';
+import auditoriums from './modules/auditoriums/definition.js';
+import seats from './modules/seats/definition.js';
+import shows from './modules/shows/definition.js';
+import { showsService } from './modules/shows/service.js';
+import { catalogService } from './modules/catalog/service.js';
+export function createApp(pool, config) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.use(helmet());
+  app.use(cors({ origin: config.origins, methods: ['GET','POST','PATCH','DELETE'] }));
+  if (config.NODE_ENV !== 'test') app.use(morgan(':method :url :status :response-time ms'));
+  app.use(express.json({ limit: '32kb' }));
+  app.use('/api', (req,res,next) => { res.set('Cache-Control','no-store'); next(); });
+  app.get('/health', async (req,res) => { await pool.query('SELECT 1'); res.json({ data: { status: 'ok', database: 'connected' } }); });
+  const auth = authenticate(pool,config);
+  app.use('/api/auth', authRoutes(pool,config,auth));
+  for (const def of [movies,theatres,auditoriums,seats]) app.use('/api/'+def.table, catalogRoutes(pool,def,auth));
+  const showService = showsService(pool);
+  app.get('/api/shows/:id/seats', async (req,res) => res.json({ data: await showService.availability(id.parse(req.params.id)) }));
+  app.use('/api/shows', catalogRoutes(pool,shows,auth,showService));
+  app.get('/api/auditoriums/:id/seats', async (req,res) => {
+    const audi = id.parse(req.params.id);
+    await catalogService(pool,auditoriums).get(audi);
+    const filter = listInput.parse({ ...req.query, auditorium_id: audi });
+    const result = await catalogService(pool,seats).list(filter);
+    res.json({ data: result.data, pagination: { page: filter.page, limit: filter.limit, total: result.total } });
+  });
+  app.use((req,res,next) => next(new ApiError(404,'NOT_FOUND','Endpoint not found')));
+  app.use(errorHandler);
+  return app;
+}

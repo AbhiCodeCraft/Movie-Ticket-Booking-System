@@ -239,3 +239,10 @@ test('oversized PostgreSQL integers and bcrypt login inputs return validation er
   await request(app).post('/api/auditoriums').set(auth(adminToken)).send({ theatre_id:audi.theatre_id,audi_number:2147483648 }).expect(400);
   await request(app).post('/api/auth/login').send({ email:'customer@test.example',password:'x'.repeat(73) }).expect(400);
 });
+test('public frontend configuration exposes only simulation availability and server time',async()=>{
+  const r=await request(app).get('/api/config').expect(200);
+  assert.deepEqual(Object.keys(r.body.data).sort(),['payment_simulation','server_time']);
+  assert.equal(r.body.data.payment_simulation,true);assert.ok(Number.isFinite(Date.parse(r.body.data.server_time)));
+  const production=createApp(db,readConfig({...process.env,NODE_ENV:'production',CORS_ORIGINS:''}));
+  assert.equal((await request(production).get('/api/config').expect(200)).body.data.payment_simulation,false);
+});

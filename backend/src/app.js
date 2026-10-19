@@ -27,6 +27,7 @@ export function createApp(pool, config) {
   app.use(express.json({ limit: '32kb' }));
   app.use('/api', (req,res,next) => { res.set('Cache-Control','no-store'); next(); });
   app.get('/health', async (req,res) => { await pool.query('SELECT 1'); res.json({ data: { status: 'ok', database: 'connected' } }); });
+  app.get('/api/config', (req,res) => res.json({ data: { payment_simulation: ['development','test'].includes(config.NODE_ENV), server_time: new Date().toISOString() } }));
   const auth = authenticate(pool,config);
   app.use('/api/auth', authRoutes(pool,config,auth));
   for (const def of [movies,theatres,auditoriums,seats]) app.use('/api/'+def.table, catalogRoutes(pool,def,auth));

@@ -1,6 +1,6 @@
-# Movie Ticket Booking System — M1
+# Movie Ticket Booking System — M2
 
-Express + JavaScript modular monolith, explicit `pg` SQL, PostgreSQL 17, JWT/bcrypt authentication and catalog management. M1 deliberately has no booking/payment/seat-lock APIs, Redis, workers, or frontend implementation.
+Express + JavaScript modular monolith, explicit `pg` SQL, PostgreSQL 17, JWT/bcrypt authentication, catalog management, and a transactional booking engine. M2 adds temporary holds, pending bookings, simulated payments, cancellation/refunds, and booking history. No Redis, workers, real payment gateway, or frontend implementation.
 
 ## Setup (Windows PowerShell, macOS, Linux)
 
@@ -48,7 +48,7 @@ From `backend`:
 npm test
 ```
 
-Tests use Node's built-in test runner and Supertest against **real PostgreSQL**. They connect to the maintenance `postgres` database through `TEST_ADMIN_URL` (or `DATABASE_URL`), create a random `ticket_m1_test_<24 hex digits>` database, apply migrations, run API/database tests, then drop only that newly created database. The configured development database is never migrated, truncated, or deleted by tests. The test role needs CREATEDB and `btree_gist` privileges. The provided Docker role has these. If the process is forcibly killed, the disposable test database may remain; inspect and remove only that matching database manually. Missing PostgreSQL is a test failure, not a skipped integration suite.
+Tests use Node's built-in test runner and Supertest against **real PostgreSQL**. They connect to the maintenance `postgres` database through `TEST_ADMIN_URL` (or `DATABASE_URL`), create random `ticket_m1_test_<24 hex digits>` and `ticket_m2_test_<24 hex digits>` databases, run API/database tests, then drop only those newly created databases. The configured development database is never migrated, truncated, or deleted by tests. The test role needs CREATEDB and `btree_gist` privileges. The provided Docker role has these. If the process is forcibly killed, a disposable test database may remain; inspect and remove only that matching database manually. Missing PostgreSQL is a test failure, not a skipped integration suite. M1 tests exercise fresh initialization; M2 tests also upgrade populated M1 history, and use up to 25 separate connections for contention tests.
 
 ## Migrations and seed
 
@@ -72,6 +72,8 @@ backend/src/
   modules/auditoriums/    auditorium schema/metadata
   modules/seats/          physical seat schema/metadata
   modules/shows/          schema plus scheduling service and ShowSeat repository
+  modules/bookings/       hold lifecycle, history, validation and transaction coordination
+  modules/payments/       simulated attempts, confirmation and cancellation/refunds
   modules/offers/         M1 schema-only note
   utils/                 typed HTTP errors
 backend/tests/           isolated PostgreSQL integration suite
@@ -84,3 +86,15 @@ Simple catalog modules share the same four responsibility layers rather than dup
 See [API endpoints and examples](docs/API.md) and [database decisions](docs/DATABASE.md).
 
 Authentication uses short-lived HS256 JWTs (15 minutes by default, maximum 1 hour), fixed issuer/audience and database lookup for current user/role on each authenticated request. Logout tells the client to discard its token; already issued tokens remain usable until expiry. There is no token blacklist or refresh-token subsystem in M1. Passwords use bcrypt cost 12 with a 72-byte maximum. Authentication requests have an in-memory per-process rate limit. Logs exclude bodies and authorization headers. Unexpected errors are logged server-side and never expose SQL details in API responses.
+
+## Booking workflow
+
+1. Log in and fetch `/api/shows/:id/seats`. IDs for reservations are **show_seat_id strings**, not physical seat IDs.
+2. `POST /api/shows/:id/locks` with `{ "seatIds": ["101", "102"] }` and a new UUID `Idempotency-Key`. This atomically creates the hold **and its PENDING booking** with snapshotted prices; save `booking_id`, `hold_id`, and `expires_at`.
+3. Optionally acknowledge the pending booking with `POST /api/bookings` and `{ "holdId": "<returned UUID>" }`. It never creates a second booking or extends the deadline.
+4. `POST /api/bookings/:id/payments` with a payment-attempt UUID key and `{ "payment_method": "UPI", "outcome": "SUCCESS" }`. `FAILED` simulates a declined attempt without extending the hold. Use a new key for a genuinely new attempt; use the same key to retry a lost response.
+5. View `/api/bookings`, `/api/bookings/:id`, or `/api/bookings/:id/status`. Cancel before show start with `POST /api/bookings/:id/cancel` and `{}`.
+
+`HOLD_TTL_SECONDS=300` defaults to five minutes (valid range 1–900); expiry is capped at show start. PostgreSQL locks serialize booking operations within a show; different shows can proceed independently. Expired locks are available immediately by deadline, even with no cleanup worker. Pending records are lazily marked EXPIRED when a transaction next touches their show; history and availability expose logical expiry immediately. Abandoned holds remain auditable expired bookings.
+
+Simulation is enabled only in `NODE_ENV=development` or `test`; production payment requests return 403. No card details are accepted. A successful payment and confirmation commit together. Confirmed cancellation records a full simulated REFUNDED payment and releases seats in the same transaction; no external money moves. See [the lifecycle and concurrency rules](docs/DATABASE.md#m2-lifecycle-and-concurrency) and [complete booking API contracts](docs/API.md#m2-booking-endpoints).

@@ -16,6 +16,7 @@ import seats from './modules/seats/definition.js';
 import shows from './modules/shows/definition.js';
 import { showsService } from './modules/shows/service.js';
 import { catalogService } from './modules/catalog/service.js';
+import { bookingRoutes } from './modules/bookings/routes.js';
 export function createApp(pool, config) {
   const app = express();
   app.disable('x-powered-by');
@@ -38,6 +39,7 @@ export function createApp(pool, config) {
     const result = await catalogService(pool,seats).list(filter);
     res.json({ data: result.data, pagination: { page: filter.page, limit: filter.limit, total: result.total } });
   });
+  app.use('/api',bookingRoutes(pool,config,auth));
   app.use((req,res,next) => next(new ApiError(404,'NOT_FOUND','Endpoint not found')));
   app.use(errorHandler);
   return app;

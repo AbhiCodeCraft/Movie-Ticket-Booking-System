@@ -2,7 +2,7 @@
 
 A working full-stack cinema booking application built for SDE placement preparation. Browse films, choose a screening and seats, complete a simulated payment, and manage bookings. Administrators configure the catalog, auditoriums, seat grids, and shows through the same application.
 
-**M1:** database, authentication and catalog. **M2:** transactional booking engine. **M3:** React UI, Docker integration and browser verification. M4 is optional future work; the application needs no Redis or worker to remain correct.
+**M1:** database, authentication and catalog. **M2:** transactional booking engine. **M3:** React UI, Docker integration and browser verification. M3.5 adds explicit public-demo payments and cloud deployment preparation. See [Vercel + Render + Neon deployment](docs/DEPLOYMENT.md). No cloud deployment has been performed. M4 is optional future work; the application needs no Redis or worker to remain correct.
 
 ## Features
 
@@ -44,7 +44,7 @@ Install/start Docker Desktop or Docker Engine with Compose. No host Node install
 docker run --rm -v "${PWD}:/workspace" -w /workspace node:24-bookworm-slim node backend/scripts/setup-env.js
 ```
 
-The current workspace already has environment files; skip this command here. It refuses to overwrite existing credentials. Templates are `.env.example` and `backend/.env.example`. Root `.env` must contain `POSTGRES_PASSWORD` and `JWT_SECRET`; if upgrading an M1/M2 checkout, add its existing backend JWT secret to root `.env`. Never commit either secret. Generated database passwords use URL-safe hex.
+The current workspace already has environment files; skip this command here. Both local environment files explicitly set `PAYMENT_MODE=demo`; missing configuration disables payments, including in development. It refuses to overwrite existing credentials. Templates are `.env.example` and `backend/.env.example`. Root `.env` must contain `POSTGRES_PASSWORD` and `JWT_SECRET`; if upgrading an M1/M2 checkout, add its existing backend JWT secret to root `.env`. Never commit either secret. Generated database passwords use URL-safe hex.
 
 Start everything:
 
@@ -66,7 +66,7 @@ docker compose exec backend node src/db/seeds/demo.js
 docker compose stop
 ```
 
-`stop` preserves the existing database volume. Restart with `docker compose up -d --wait`. Demo seed creates six fictional movies with local artwork, three theatres, 120 seats and 63 screenings across seven days. Repeated startup does not duplicate or move those records. Schedule new shows through the admin UI when demo dates pass. Set `SEED_DEMO=false` in root `.env` to disable automatic demo seeding. The original M1 seed is retained for regression fixtures.
+`stop` preserves the existing database volume. Restart with `docker compose up -d --wait`. Demo seed creates six fictional movies with local artwork, three theatres, 120 seats and 63 screenings across seven days. Repeated startup preserves existing records and adds missing upcoming screenings. Run `npm run seed:demo` explicitly on hosted deployments before interviews to refresh upcoming dates. Set `SEED_DEMO=false` in root `.env` to disable automatic demo seeding. The original M1 seed is retained for regression fixtures.
 
 **Destructive reset — deletes ALL project database data, including bookings:** only if intentionally resetting the local demo, run `docker compose down -v`, then `docker compose up --build -d --wait`. This command was not used during implementation.
 
@@ -170,7 +170,7 @@ The browser stores its short-lived JWT in **sessionStorage**, not an HttpOnly co
 
 Pending payment identifiers are also stored per user/booking in sessionStorage so lost-response retries reuse the same key. A refreshed page reads backend state before offering payment. Client countdowns are informational; server timestamps/status determine validity. Dates/times are shown in the browser's timezone, including local date filters and admin datetime inputs (converted to ISO offsets for the API).
 
-Compose is an explicitly local **development/demo** deployment. Payment simulation is enabled only for development/test; it never collects real payment credentials. `/api/config` reports whether simulation is enabled, and production rejects payment simulation regardless of UI state. Production deployment would additionally need HTTPS, restricted database roles, managed secrets, suitable rate limiting/proxy configuration, and a real payment workflow; these are not claimed here.
+Payment simulation requires explicit `PAYMENT_MODE=demo` in every environment; the default is `disabled`. No real money or credentials are collected. The SUCCESS/FAILED selector exercises the demo and is not gateway verification. `/api/config` reports availability; server-side ownership, expiry and idempotency remain enforced. See [deployment instructions](docs/DEPLOYMENT.md) for HTTPS, CORS, verified Neon TLS and bounded proxy trust.
 
 ## Known limits and future work
 

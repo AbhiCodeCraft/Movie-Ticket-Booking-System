@@ -298,6 +298,7 @@ export function BookingDetails() {
               </div>
             </div>
             <section className="panel">
+              <p className="hint">Demo booking only. No money was collected and this is not a cinema admission ticket.</p>
               <Status value={b.status} />
               <h2 style={{ marginTop: 24 }}>{b.movie_title}</h2>
               <dl className="ticket-meta">

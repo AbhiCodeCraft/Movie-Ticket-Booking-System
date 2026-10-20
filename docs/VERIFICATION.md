@@ -1,4 +1,32 @@
-# Verification — M1, M2 and M3
+# Verification — M1, M2, M3 and M3.5
+
+## M3.5 — final verification, 2026-10-20
+
+Environment: Windows PowerShell, project-local Node 24.22.0, Docker PostgreSQL 17, Playwright Chromium. No cloud deployment, GitHub push or cloud credential use occurred.
+
+| Check | Command actually executed | Result |
+| --- | --- | --- |
+| Backend (from `backend`) | `..\.local\node_modules\node\bin\node.exe --env-file-if-exists=.env --test --test-concurrency=1` | 76 passed, 0 failed, 0 skipped |
+| Frontend (from `frontend`) | `..\.local\node_modules\node\bin\node.exe node_modules/vitest/vitest.mjs run` | 14 passed, 0 failed, 0 skipped |
+| Browser (from `backend`) | `..\.local\node_modules\node\bin\node.exe --env-file=.env scripts/e2e.js` | 8 passed, 0 failed, 0 skipped |
+| Frontend production build | Local Node 24 running `node_modules/vite/bin/vite.js build` | Passed |
+| Hosted frontend configuration | Same build with `VERCEL=1`, `VITE_API_BASE=https://portfolio-backend.example/api` | Passed; hosted endpoint in bundle, no local backend URL or backend secret markers |
+| Invalid hosted configuration | Same build with `VERCEL=1`, HTTP localhost API URL | Correctly rejected |
+| Docker | `docker compose up --build -d --wait` | PostgreSQL, backend and frontend healthy |
+
+The commands correspond to `npm test` in each package, frontend `npm run test:e2e`, and `npm run build` when Node 24 is on PATH. Database-dependent tests ran against real, randomly named disposable PostgreSQL databases, not development data. Backend coverage includes unchanged M1/M2 scenarios, fresh migrations, populated upgrade/reapplication, constraints, concurrent ownership, expiration, idempotency, and cancellation/refund.
+
+New regressions verify explicit demo payments with production configuration; unconfigured production denies payments; missing/cancelled/expired bookings cannot pay; non-owners cannot pay; competing customers cannot both confirm; CORS/preflight restrictions; bounded proxy-aware mutation limits; safe JSON errors; Neon TLS configuration; direct migration URL requirement; and repeat seeding that extends future screenings while retaining held bookings, inventory ownership and history.
+
+Rate counters are reset by constructing an app per independent backend test scenario, without disabling or increasing the production limits. The separate rate-limit test deliberately reaches 429. Browser admin grid creation and full customer flows pass with the real limits enabled.
+
+The exact documented Render command, `npm run migrate && exec node --env-file-if-exists=.env src/server.js`, ran in a temporary local Docker container with NODE_ENV=production, PAYMENT_MODE=demo and an HTTPS CORS origin. It applied existing migrations, started without an `.env` file, returned database health and demo config, allowed the approved origin and rejected an unapproved origin. SIGTERM shutdown exited **0**; only the temporary container was removed. Plain `npm start` also started successfully earlier, but the direct `exec node` command is documented to deliver shutdown signals directly.
+
+Live local Docker requests to `/movies`, `/bookings/123`, `/admin`, proxied `/api/config`, and backend `/health` returned 200. Nested-route refresh is locally verified; Vercel's rewrite configuration is prepared but not exercised on Vercel.
+
+Security review found no current environment secret matches or sensitive environment/key/log filenames across 145 reachable historical file blobs. Candidate tracked/untracked source files and the final hosted frontend bundle also contained no current known environment secrets. This is a bounded scan, not a guarantee against all secret formats. Both runtime dependency audits (`npm audit --omit=dev`) reported zero known vulnerabilities. Git and Docker ignore rules exclude environment secrets; credentials were never printed in audit output.
+
+Remaining live checks: Neon CA/TLS handshake and extension permissions, Render/Vercel provisioning, HTTPS/DNS, actual ingress hop behavior and per-client rate limits, and the deployed browser walkthrough. These require the user's future accounts and are explicitly listed in [DEPLOYMENT.md](DEPLOYMENT.md). This milestone establishes local deployment readiness, not verified live cloud operation.
 
 ## M3 — 2026-10-20
 

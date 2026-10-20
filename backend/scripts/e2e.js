@@ -20,7 +20,7 @@ try{
   pool=new Pool({connectionString:target.href,max:12});await migrate(pool);await demoSeed(pool);
   const password=randomBytes(16).toString('hex'),email=`admin-${randomUUID()}@example.test`;
   await pool.query("INSERT INTO users(name,email,password_hash,role) VALUES('E2E Admin',$1,$2,'ADMIN')",[email,await bcrypt.hash(password,12)]);
-  const config=readConfig({...process.env,DATABASE_URL:target.href,NODE_ENV:'test',CORS_ORIGINS:'http://127.0.0.1:5174',JWT_SECRET:randomBytes(48).toString('hex')});
+  const config=readConfig({...process.env,DATABASE_URL:target.href,NODE_ENV:'test',PAYMENT_MODE:'demo',CORS_ORIGINS:'http://127.0.0.1:5174',JWT_SECRET:randomBytes(48).toString('hex')});
   server=createApp(pool,config).listen(3100,'127.0.0.1');await new Promise((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
   vite=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5174'],{cwd:frontend,stdio:'inherit',env:{...process.env,API_PROXY_TARGET:'http://127.0.0.1:3100'}});
   await ready('http://127.0.0.1:5174');

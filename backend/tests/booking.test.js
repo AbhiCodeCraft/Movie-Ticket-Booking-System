@@ -1,4 +1,4 @@
-import { test,before,after } from 'node:test';
+import { test,before,beforeEach,after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes,randomUUID,createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -58,7 +58,7 @@ before(async () => {
   await db.query("UPDATE show_seats SET status='BOOKED' WHERE show_seat_id=$1",[legacySeat.show_seat_id]);
   await db.query("INSERT INTO payments(booking_id,amount,payment_method,status) VALUES($1,250,'UPI','SUCCESS')",[legacyBooking.booking_id]);
   await migrate(db); await migrate(db);
-  config=readConfig({ ...process.env,NODE_ENV:'test',HOLD_TTL_SECONDS:'300' }); app=createApp(db,config);
+  config=readConfig({ ...process.env,NODE_ENV:'test',PAYMENT_MODE:'demo',HOLD_TTL_SECONDS:'300' }); app=createApp(db,config);
   movieId=(await db.query('SELECT movie_id FROM movies LIMIT 1')).rows[0].movie_id;
   theatreId=(await db.query('SELECT theatre_id FROM theatres LIMIT 1')).rows[0].theatre_id;
   for (let i=0;i<21;i++) {
@@ -67,6 +67,8 @@ before(async () => {
     users.push(user);
   }
 });
+// Independent scenarios get independent process-local rate-limit counters.
+beforeEach(() => { app=createApp(db,config); });
 after(async () => {
   if(db) await db.end();
   if(created) { assert.match(name,/^ticket_m2_test_[a-f0-9]{24}$/); await maintenance.query(`DROP DATABASE "${name}"`); }
@@ -195,7 +197,7 @@ test('same-user ABA reacquisition cannot be confirmed or released by old hold',a
 });
 test('production disables simulation even for a valid owner',async () => {
   const f=await fixture(),b=(await hold(users[0],f).expect(201)).body.data;
-  const production=createApp(db,{...config,NODE_ENV:'production'});
+  const production=createApp(db,{...config,NODE_ENV:'production',PAYMENT_MODE:undefined});
   await request(production).post(`/api/bookings/${b.booking_id}/payments`).set(headers(users[0])).set('Idempotency-Key',randomUUID()).send({payment_method:'UPI',outcome:'SUCCESS'}).expect(403);
 });
 test('unauthenticated booking APIs and malformed keys/hold identities are rejected',async () => {
@@ -312,4 +314,57 @@ test('pending holds cannot confirm when show starts and new holds are rejected',
   await db.query("UPDATE shows SET start_time=clock_timestamp()-interval '1 minute' WHERE show_id=$1",[f.showId]);
   await pay(users[0],b).expect(409); await hold(users[1],f).expect(409);
   const status=await request(app).get(`/api/bookings/${b.booking_id}/status`).set(headers(users[0])).expect(200); assert.equal(status.body.data.status,'EXPIRED');
+});
+
+// Production-like demo configuration uses the same M2 transaction paths.
+function publicDemo() { return createApp(db,{...config,NODE_ENV:'production',PAYMENT_MODE:'demo'}); }
+function demoPay(server,user,b,key=randomUUID()) {
+  return request(server).post(`/api/bookings/${b.booking_id}/payments`).set(headers(user)).set('Idempotency-Key',key).send({payment_method:'UPI',outcome:'SUCCESS'});
+}
+test('explicit production demo confirms a pending booking and retries without another charge',async()=>{
+  const server=publicDemo(),f=await fixture(),b=(await hold(users[0],f).expect(201)).body.data,key=randomUUID();
+  const a=await demoPay(server,users[0],b,key).expect(200),r=await demoPay(server,users[0],b,key).expect(200);
+  assert.equal(a.body.data.booking.status,'CONFIRMED');assert.equal(r.body.data.payment.payment_id,a.body.data.payment.payment_id);
+  assert.equal(r.body.data.replayed,true);
+});
+test('public demo cannot confirm missing, cancelled or expired bookings',async()=>{
+  const server=publicDemo();
+  await demoPay(server,users[0],{booking_id:'9223372036854775807'}).expect(404);
+  for(const state of ['expired','cancelled']){
+    const f=await fixture(),b=(await hold(users[0],f).expect(201)).body.data;
+    if(state==='expired')await expire(b);else await cancel(users[0],b).expect(200);
+    await demoPay(server,users[0],b).expect(409);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM payments WHERE booking_id=$1',[b.booking_id])).rows[0].n,0);
+  }
+});
+test('public demo rejects unauthenticated and other-user payment',async()=>{
+  const server=publicDemo(),f=await fixture(),b=(await hold(users[0],f).expect(201)).body.data;
+  await request(server).post(`/api/bookings/${b.booking_id}/payments`).send({}).expect(401);
+  await demoPay(server,users[1],b).expect(403);
+});
+test('public demo competing customers can confirm only one owner of a seat',async()=>{
+  const server=publicDemo(),f=await fixture();
+  const responses=await Promise.all([users[0],users[1]].map(user=>request(server).post(`/api/shows/${f.showId}/locks`).set(headers(user)).set('Idempotency-Key',randomUUID()).send({seatIds:[f.ids[0]]})));
+  assert.deepEqual(responses.map(r=>r.status).sort(),[201,409]);
+  const index=responses.findIndex(r=>r.status===201),b=responses[index].body.data;
+  const payments=await Promise.all([demoPay(server,users[index],b),demoPay(server,users[1-index],b)]);
+  assert.deepEqual(payments.map(r=>r.status).sort(),[200,403]);
+  assert.equal((await inventory(f))[0].status,'BOOKED');
+});
+
+import {demoSeed} from '../src/db/seeds/demo.js';
+test('demo seed is repeatable, extends upcoming screenings and preserves held booking history',async()=>{
+  await demoSeed(db);
+  const counts=async()=> (await db.query('SELECT (SELECT count(*) FROM movies) AS movies,(SELECT count(*) FROM theatres) AS theatres,(SELECT count(*) FROM shows) AS shows,(SELECT count(*) FROM show_seats) AS seats')).rows[0];
+  const initial=await counts();await demoSeed(db);assert.deepEqual(await counts(),initial);
+  const targets=(await db.query("SELECT s.show_id FROM shows s JOIN auditoriums a USING(auditorium_id) JOIN theatres t USING(theatre_id) WHERE t.theatre_name LIKE 'Frame Grand%' ORDER BY s.start_time LIMIT 2")).rows;
+  const seat=(await db.query('SELECT show_seat_id FROM show_seats WHERE show_id=$1 LIMIT 1',[targets[0].show_id])).rows[0];
+  const b=(await hold(users[0],{showId:targets[0].show_id,ids:[seat.show_seat_id]}).expect(201)).body.data;
+  await db.query("UPDATE shows SET start_time=start_time-interval '14 days',end_time=end_time-interval '14 days' WHERE show_id=$1",[targets[1].show_id]);
+  await demoSeed(db);
+  assert.equal(Number((await counts()).shows),Number(initial.shows)+1);
+  const saved=(await db.query('SELECT status,total_amount FROM bookings WHERE booking_id=$1',[b.booking_id])).rows[0];
+  assert.equal(saved.status,'PENDING');assert.equal(saved.total_amount,b.total_amount);
+  assert.equal((await db.query('SELECT current_booking_id FROM show_seats WHERE show_seat_id=$1',[seat.show_seat_id])).rows[0].current_booking_id,b.booking_id);
+  const extended=await counts();await demoSeed(db);assert.deepEqual(await counts(),extended);
 });

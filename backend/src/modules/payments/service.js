@@ -5,7 +5,7 @@ const conflict = message => new ApiError(409,'BOOKING_CONFLICT',message);
 export function paymentsService(pool,config) {
   return {
     async pay(user,id,input,key) {
-      if (!['development','test'].includes(config.NODE_ENV)) throw new ApiError(403,'SIMULATION_DISABLED','Simulated payments are disabled in production');
+      if (config.PAYMENT_MODE !== 'demo') throw new ApiError(403,'SIMULATION_DISABLED','Simulated payments are disabled on this server');
       return bookingTransaction(pool,async (db,repo) => {
         const { booking,seats,now } = await lockedBooking(repo,id,user);
         const payments = paymentsRepository(db), previous = await payments.byKey(id,key);

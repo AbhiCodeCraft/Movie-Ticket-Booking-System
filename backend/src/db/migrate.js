@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
+import { databaseOptions, migrationURL } from './connection.js';
 
 export async function migrate(pool) {
   const client = await pool.connect();
@@ -24,10 +25,14 @@ export async function migrate(pool) {
         await client.query('COMMIT');
       } catch (error) { await client.query('ROLLBACK'); throw error; }
     }
-  } finally { await client.query('SELECT pg_advisory_unlock(817243)'); client.release(); }
+  } finally {
+    try { await client.query('SELECT pg_advisory_unlock(817243)'); }
+    catch (error) { client.release(true); throw error; }
+    client.release();
+  }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool(databaseOptions(migrationURL(), 1));
   try { await migrate(pool); console.log('Migrations applied'); } finally { await pool.end(); }
 }

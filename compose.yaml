@@ -23,6 +23,8 @@ services:
       PORT: 3000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
       HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-300}
+      PAYMENT_MODE: ${PAYMENT_MODE:-disabled}
+      TRUST_PROXY_HOPS: 1
       SEED_DEMO: ${SEED_DEMO:-true}
     depends_on:
       db:

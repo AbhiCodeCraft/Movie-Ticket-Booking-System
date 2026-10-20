@@ -120,7 +120,7 @@ Hold acquisition already created the pending booking to avoid a second permanent
 { "payment_method": "UPI", "outcome": "SUCCESS" }
 ```
 
-Methods: `CARD`, `UPI`, `NET_BANKING`; outcomes: `SUCCESS`, `FAILED`. Unknown fields (including amount, card number, CVV, or user ID) are rejected. Production returns 403 `SIMULATION_DISABLED` for valid payment requests. No gateway/network request or artificial delay is involved.
+Methods: `CARD`, `UPI`, `NET_BANKING`; outcomes: `SUCCESS`, `FAILED`. Unknown fields (including amount, card number, CVV, or user ID) are rejected. Unless `PAYMENT_MODE=demo` is explicitly set, valid payment requests return 403 `SIMULATION_DISABLED` in every environment. Production demo mode uses the same ownership, expiry and idempotency rules. No gateway/network request or artificial delay is involved.
 
 Response: `{ "data": { "booking": { ... }, "payment": { "payment_id", "booking_id", "amount", "payment_method", "status", "transaction_id", "idempotency_key", "requested_outcome", "created_at", "refunded_at" }, "replayed": false } }` (field names describe the shape).
 
@@ -136,6 +136,10 @@ Contention/deadlock/serialization/statement timeouts return 409 `RETRYABLE_CONFL
 
 ## M3 frontend contract
 
-`GET /api/config` is public and returns `{ "data": { "payment_simulation": true, "server_time": "ISO timestamp" } }`. Simulation is enabled only in development/test. No secrets are returned. The checkout uses this flag and the server-provided booking total and deadline; its countdown never authorizes a payment.
+`GET /api/config` is public and returns `{ "data": { "payment_simulation": true, "server_time": "ISO timestamp" } }`. Simulation is enabled only when `PAYMENT_MODE=demo`, independent of NODE_ENV. No secrets are returned. The checkout uses this flag and the server-provided booking total and deadline; its countdown never authorizes a payment.
 
 The React application calls the same REST APIs through `/api` (Vite proxy locally, Nginx proxy in Docker). JWTs and pending operation keys are kept in sessionStorage; login expiry clears authentication. Hold and payment keys survive refresh so ambiguous failures can be retried with the same parameters. Cancellation requires a confirmation dialog. Admin controls use the existing RBAC-protected catalog APIs; browser route guards supplement server authorization.
+
+## M3.5 public demo controls
+
+Requests with an unapproved Origin return 403 `ORIGIN_DENIED`. Originless authenticated clients still work; CORS is not authorization. Auth writes are limited to 30 requests per 15 minutes per IP; all API mutations also share 120 per minute per IP and return structured 429 `RATE_LIMITED`. Limits are process-local. `/api/config` exposes only simulation availability and server time. Demo payment outcomes never represent real funds.

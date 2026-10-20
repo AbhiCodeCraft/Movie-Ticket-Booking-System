@@ -26,7 +26,7 @@ before(async () => {
   const url = new URL(adminUrl); url.pathname = '/'+databaseName;
   db = new Pool({ connectionString: url.href, max: 6, options: '-c timezone=UTC -c statement_timeout=10000' });
   await migrate(db); await migrate(db); await seed(db); await seed(db);
-  const config = readConfig({ ...process.env, NODE_ENV: 'test' });
+  const config = readConfig({ ...process.env, NODE_ENV: 'test', PAYMENT_MODE: 'demo' });
   app = createApp(db,config);
   const admin = await request(app).post('/api/auth/register').send({ name: 'Admin', email: 'admin@test.example', password });
   await db.query("UPDATE users SET role='ADMIN' WHERE user_id=$1",[admin.body.data.user_id]);
@@ -243,6 +243,6 @@ test('public frontend configuration exposes only simulation availability and ser
   const r=await request(app).get('/api/config').expect(200);
   assert.deepEqual(Object.keys(r.body.data).sort(),['payment_simulation','server_time']);
   assert.equal(r.body.data.payment_simulation,true);assert.ok(Number.isFinite(Date.parse(r.body.data.server_time)));
-  const production=createApp(db,readConfig({...process.env,NODE_ENV:'production',CORS_ORIGINS:''}));
+  const production=createApp(db,readConfig({...process.env,NODE_ENV:'production',PAYMENT_MODE:undefined,CORS_ORIGINS:''}));
   assert.equal((await request(production).get('/api/config').expect(200)).body.data.payment_simulation,false);
 });

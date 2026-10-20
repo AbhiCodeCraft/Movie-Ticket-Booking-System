@@ -133,3 +133,9 @@ The server charges the booking's SQL-calculated snapshot total. SUCCESS atomical
 Availability and history compute expiry from PostgreSQL time. Detail/status/write transactions also persist EXPIRED and release expired inventory for the show. No background process is needed. An old hold UUID cannot affect a new hold, even when both belong to the same user.
 
 Contention/deadlock/serialization/statement timeouts return 409 `RETRYABLE_CONFLICT`. Retry with the **same** key after a short delay (or after a lost HTTP response). The backend rolls back and does not blindly retry transactions internally. Ordinary `BOOKING_CONFLICT` means the state/ownership prevents that operation. Unrecognized booking/hold IDs return 404; malformed IDs/keys/inputs return 400.
+
+## M3 frontend contract
+
+`GET /api/config` is public and returns `{ "data": { "payment_simulation": true, "server_time": "ISO timestamp" } }`. Simulation is enabled only in development/test. No secrets are returned. The checkout uses this flag and the server-provided booking total and deadline; its countdown never authorizes a payment.
+
+The React application calls the same REST APIs through `/api` (Vite proxy locally, Nginx proxy in Docker). JWTs and pending operation keys are kept in sessionStorage; login expiry clears authentication. Hold and payment keys survive refresh so ambiguous failures can be retried with the same parameters. Cancellation requires a confirmation dialog. Admin controls use the existing RBAC-protected catalog APIs; browser route guards supplement server authorization.

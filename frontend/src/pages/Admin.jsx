@@ -1,22 +1,539 @@
-import {useState} from 'react';
-import {api,all,catalog} from '../api/client';
-import {useResource} from '../hooks/useResource';
-import {Resource,ErrorMessage,ConfirmDialog} from '../components/UI';
-const definitions={
-  movies:{key:'movie_id',fields:[['title','Title'],['description','Description','textarea'],['language','Language'],['release_date','Release date','date'],['duration_minutes','Duration (minutes)','number'],['genre','Genre'],['poster_url','Poster URL','url']]},
-  theatres:{key:'theatre_id',fields:[['theatre_name','Theatre name'],['location','Location']]},
-  auditoriums:{key:'auditorium_id',fields:[['theatre_id','Theatre','theatre'],['audi_number','Auditorium number','number']]},
-  seats:{key:'seat_id',fields:[['auditorium_id','Auditorium','auditorium'],['seat_number','Seat number'],['row','Row'],['column','Column','number'],['seat_type','Seat type']]},
-  shows:{key:'show_id',fields:[['movie_id','Movie','movie'],['auditorium_id','Auditorium','auditorium'],['start_time','Start time (local)','datetime-local'],['end_time','End time (local)','datetime-local'],['price','Seat price (INR)','money']]}
+import { useState } from "react";
+import { api, all, catalog } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { Resource, ErrorMessage, ConfirmDialog } from "../components/UI";
+const definitions = {
+  movies: {
+    key: "movie_id",
+    fields: [
+      ["title", "Title"],
+      ["description", "Description", "textarea"],
+      ["language", "Language"],
+      ["release_date", "Release date", "date"],
+      ["duration_minutes", "Duration (minutes)", "number"],
+      ["genre", "Genre"],
+      ["poster_url", "Poster URL", "url"],
+    ],
+  },
+  theatres: {
+    key: "theatre_id",
+    fields: [
+      ["theatre_name", "Theatre name"],
+      ["location", "Location"],
+    ],
+  },
+  auditoriums: {
+    key: "auditorium_id",
+    fields: [
+      ["theatre_id", "Theatre", "theatre"],
+      ["audi_number", "Auditorium number", "number"],
+    ],
+  },
+  seats: {
+    key: "seat_id",
+    fields: [
+      ["auditorium_id", "Auditorium", "auditorium"],
+      ["seat_number", "Seat number"],
+      ["row", "Row"],
+      ["column", "Column", "number"],
+      ["seat_type", "Seat type"],
+    ],
+  },
+  shows: {
+    key: "show_id",
+    fields: [
+      ["movie_id", "Movie", "movie"],
+      ["auditorium_id", "Auditorium", "auditorium"],
+      ["start_time", "Start time (local)", "datetime-local"],
+      ["end_time", "End time (local)", "datetime-local"],
+      ["price", "Seat price (INR)", "money"],
+    ],
+  },
 };
-const title=s=>s[0].toUpperCase()+s.slice(1);
-function localInput(value){const d=new Date(value);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
-export default function Admin(){const [tab,setTab]=useState('overview'),[edit,setEdit]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[revision,setRevision]=useState(0),[deleting,setDeleting]=useState(null),[cancelId,setCancelId]=useState(''),[cancelConfirm,setCancelConfirm]=useState(false);const r=useResource(async()=>({...await catalog(),seats:await all('/seats')}));const changeTab=t=>{setTab(t);setEdit(null);setError('');setMessage('');};
-  function fail(e){setError(e.status===409?`${e.message}. Check overlapping show times, duplicate auditorium/seat numbers, or existing show and booking history.`:e.message);}
-  async function save(e){e.preventDefault();if(busy)return;setBusy(true);setError('');setMessage('');try{const raw=Object.fromEntries(new FormData(e.currentTarget)),body={};for(const [name,,type] of definitions[tab].fields){const value=raw[name];if(value===undefined)continue;if(value===''){if(['description','genre','poster_url'].includes(name))body[name]=null;continue;}body[name]=type==='number'?Number(value):type==='datetime-local'?new Date(value).toISOString():type==='money'?Number(value).toFixed(2):value;}
-    await api('/'+tab+(edit?'/'+edit[definitions[tab].key]:''),{method:edit?'PATCH':'POST',body});setMessage(`${title(tab)} saved to the database.`);setEdit(null);setRevision(v=>v+1);r.reload();}catch(e){fail(e);}finally{setBusy(false);}}
-  async function remove(){setBusy(true);try{await api(`/${tab}/${deleting[definitions[tab].key]}`,{method:'DELETE'});setDeleting(null);setMessage('Record deleted.');r.reload();}catch(e){fail(e);setDeleting(null);}finally{setBusy(false);}}
-  async function grid(e){e.preventDefault();if(busy)return;setBusy(true);setError('');setMessage('');let created=0;try{const f=Object.fromEntries(new FormData(e.currentTarget));const rows=f.rows.toUpperCase().split(',').map(s=>s.trim());if(rows.length>10||new Set(rows).size!==rows.length||rows.some(s=>!/^[A-Z]{1,2}$/.test(s)))throw new Error('Use up to 10 distinct row labels, for example A,B,C.');const existing=await all('/seats?auditorium_id='+f.auditorium_id);const occupied=new Set(existing.map(s=>s.seat_number));for(const row of rows)for(let column=1;column<=Number(f.columns);column++){const seat_number=row+column;if(occupied.has(seat_number))continue;await api('/seats',{method:'POST',body:{auditorium_id:f.auditorium_id,row,column,seat_number,seat_type:f.seat_type}});created++;}setMessage(`${created} seats created. Existing seat numbers were kept.`);}catch(e){setError(`${created} seats were saved before the error: ${e.message}. Refresh and retry to add remaining seats. Scheduled layouts cannot be changed.`);}finally{setBusy(false);r.reload();}}
-  async function adminCancel(){setBusy(true);try{const result=await api(`/bookings/${cancelId}/cancel`,{method:'POST',body:{}});setMessage(`Booking #${result.data.booking_id}: ${result.data.status}. Payment: ${result.data.payment_status}.`);setCancelConfirm(false);}catch(e){fail(e);setCancelConfirm(false);}finally{setBusy(false);}}
-  return <><div className="page-title"><div className="eyebrow">Behind the scenes</div><h1>Studio administration</h1><p>Manage your catalog, configure auditoriums, and schedule the next great night.</p></div><div className="admin-tabs">{['overview',...Object.keys(definitions),'bookings'].map(t=><button key={t} className={tab===t?'active':''} onClick={()=>changeTab(t)}>{title(t)}</button>)}</div><ErrorMessage message={error}/>{message&&<div className="notice" role="status">{message}</div>}<Resource resource={r}>{data=>{const options=type=>type==='movie'?data.movies.map(m=>[m.movie_id,`${m.title} (#${m.movie_id})`]):type==='theatre'?data.theatres.map(t=>[t.theatre_id,`${t.theatre_name} (#${t.theatre_id})`]):data.auditoriums.map(a=>[a.auditorium_id,`${data.theatres.find(t=>t.theatre_id===a.theatre_id)?.theatre_name} · Audi ${a.audi_number} (#${a.auditorium_id})`]);if(tab==='overview')return <><div className="stats">{['movies','theatres','auditoriums','shows'].map(t=><div className="panel stat" key={t}><strong>{data[t].length}</strong><p>{title(t)} in your catalog</p></div>)}</div><section className="panel" style={{marginTop:24}}><h2>Set the stage</h2><p>Create a movie and theatre, add an auditorium, configure its seats, then schedule a show. Seats become immutable once a show is scheduled. Show creation automatically generates priced, show-specific inventory.</p></section></>;if(tab==='bookings')return <section className="panel"><h2>Cancel a booking by reference</h2><p>Administrators can cancel eligible bookings. Customer history remains private; this interface does not expose an unsupported global booking list.</p><form onSubmit={e=>{e.preventDefault();setCancelConfirm(true);}} style={{maxWidth:360,marginTop:24}}><label className="field"><span>Booking reference</span><input value={cancelId} onChange={e=>setCancelId(e.target.value)} pattern="[1-9][0-9]*" required/></label><button className="button secondary">Review cancellation</button></form>{cancelConfirm&&<ConfirmDialog title={`Cancel booking #${cancelId}?`} onClose={()=>setCancelConfirm(false)} onConfirm={adminCancel} busy={busy}>This releases the customer's seats and records any simulated refund. Confirm only for an authorized cancellation request.</ConfirmDialog>}</section>;
-    const def=definitions[tab];return <div className="admin-layout"><section className="panel table-scroll"><h2>{title(tab)} <span className="muted">({data[tab].length})</span></h2><table><thead><tr><th>ID</th><th>Record</th><th>Actions</th></tr></thead><tbody>{data[tab].map(row=><tr key={row[def.key]}><td>{row[def.key]}</td><td>{row.title||row.theatre_name||(tab==='auditoriums'?`Audi ${row.audi_number} · Theatre #${row.theatre_id}`:tab==='seats'?`${row.seat_number} · Audi #${row.auditorium_id}`:`${row.movie?.title} · ${new Date(row.start_time).toLocaleString()}`)}</td><td><button className="button secondary small" onClick={()=>{setEdit(row);setError('');}}>Edit</button><button className="button secondary small" onClick={()=>setDeleting(row)}>Delete</button></td></tr>)}</tbody></table>{!data[tab].length&&<p className="hint">No records yet. Add your first one.</p>}</section><div className="panel admin-form"><h2>{edit?'Edit':'Create'} {tab.replace(/s$/,'')}</h2><form key={tab+revision+(edit?.[def.key]||'new')} onSubmit={save}>{def.fields.map(([name,label,type='text'])=>{const optional=['description','genre','poster_url'].includes(name)||(name==='price'&&edit);const immutable=edit&&((tab==='seats'&&name==='auditorium_id')||(tab==='auditoriums'&&name==='theatre_id')||(tab==='shows'&&name==='auditorium_id'));return <label className="field" key={name}><span>{label}{optional?' (optional)':''}</span>{['movie','theatre','auditorium'].includes(type)?<select name={name} required disabled={!!immutable} defaultValue={edit?.[name]||''}><option value="">Choose…</option>{options(type).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select>:type==='textarea'?<textarea name={name} defaultValue={edit?.[name]||''}/>:<input name={name} type={type==='money'?'number':type} required={!optional} min={type==='money'?'0.01':type==='number'?'1':undefined} step={type==='money'?'0.01':undefined} defaultValue={type==='datetime-local'&&edit?.[name]?localInput(edit[name]):edit?.[name]||''}/>}</label>;})}<div className="actions"><button className="button" disabled={busy}>{busy?'Saving…':edit?'Save changes':'Create '+tab.replace(/s$/,'')}</button>{edit&&<button type="button" className="button secondary" onClick={()=>setEdit(null)}>Cancel edit</button>}</div></form>{tab==='seats'&&<form onSubmit={grid} className="grid-form"><h2>Generate a seat grid</h2><label className="field"><span>Grid auditorium</span><select name="auditorium_id" required><option value="">Choose…</option>{options('auditorium').map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label className="field"><span>Row labels</span><input name="rows" defaultValue="A,B,C" required/></label><label className="field"><span>Seats per row</span><input name="columns" type="number" min="1" max="20" defaultValue="6" required/></label><label className="field"><span>Grid seat type</span><select name="seat_type"><option>STANDARD</option><option>PREMIUM</option></select></label><button className="button secondary" disabled={busy}>Generate seats</button><p className="hint">Each seat is saved separately. Existing seat numbers are skipped. Partial progress is reported if a request fails.</p></form>}</div>{deleting&&<div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label="Delete record?"><h2>Delete this record?</h2><p style={{marginTop:14}}>Records with show or booking dependencies cannot be deleted.</p><div className="actions"><button autoFocus className="button secondary" onClick={()=>setDeleting(null)}>Keep record</button><button className="button danger" disabled={busy} onClick={remove}>Confirm delete</button></div></section></div>}</div>;}}</Resource></>;}
+const title = (s) => s[0].toUpperCase() + s.slice(1);
+function localInput(value) {
+  const d = new Date(value);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
+export default function Admin() {
+  const [tab, setTab] = useState("overview"),
+    [edit, setEdit] = useState(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [message, setMessage] = useState(""),
+    [revision, setRevision] = useState(0),
+    [deleting, setDeleting] = useState(null),
+    [cancelId, setCancelId] = useState(""),
+    [cancelConfirm, setCancelConfirm] = useState(false);
+  const r = useResource(async () => ({
+    ...(await catalog()),
+    seats: await all("/seats"),
+  }));
+  const changeTab = (t) => {
+    setTab(t);
+    setEdit(null);
+    setError("");
+    setMessage("");
+  };
+  function fail(e) {
+    setError(
+      e.status === 409
+        ? `${e.message}. Check overlapping show times, duplicate auditorium/seat numbers, or existing show and booking history.`
+        : e.message,
+    );
+  }
+  async function save(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const raw = Object.fromEntries(new FormData(e.currentTarget)),
+        body = {};
+      for (const [name, , type] of definitions[tab].fields) {
+        const value = raw[name];
+        if (value === undefined) continue;
+        if (value === "") {
+          if (["description", "genre", "poster_url"].includes(name))
+            body[name] = null;
+          continue;
+        }
+        body[name] =
+          type === "number"
+            ? Number(value)
+            : type === "datetime-local"
+              ? new Date(value).toISOString()
+              : type === "money"
+                ? Number(value).toFixed(2)
+                : value;
+      }
+      await api("/" + tab + (edit ? "/" + edit[definitions[tab].key] : ""), {
+        method: edit ? "PATCH" : "POST",
+        body,
+      });
+      setMessage(`${title(tab)} saved to the database.`);
+      setEdit(null);
+      setRevision((v) => v + 1);
+      r.reload();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove() {
+    setBusy(true);
+    try {
+      await api(`/${tab}/${deleting[definitions[tab].key]}`, {
+        method: "DELETE",
+      });
+      setDeleting(null);
+      setMessage("Record deleted.");
+      r.reload();
+    } catch (e) {
+      fail(e);
+      setDeleting(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function grid(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    let created = 0;
+    try {
+      const f = Object.fromEntries(new FormData(e.currentTarget));
+      const rows = f.rows
+        .toUpperCase()
+        .split(",")
+        .map((s) => s.trim());
+      if (
+        rows.length > 10 ||
+        new Set(rows).size !== rows.length ||
+        rows.some((s) => !/^[A-Z]{1,2}$/.test(s))
+      )
+        throw new Error("Use up to 10 distinct row labels, for example A,B,C.");
+      const existing = await all("/seats?auditorium_id=" + f.auditorium_id);
+      const occupied = new Set(existing.map((s) => s.seat_number));
+      for (const row of rows)
+        for (let column = 1; column <= Number(f.columns); column++) {
+          const seat_number = row + column;
+          if (occupied.has(seat_number)) continue;
+          await api("/seats", {
+            method: "POST",
+            body: {
+              auditorium_id: f.auditorium_id,
+              row,
+              column,
+              seat_number,
+              seat_type: f.seat_type,
+            },
+          });
+          created++;
+        }
+      setMessage(`${created} seats created. Existing seat numbers were kept.`);
+    } catch (e) {
+      setError(
+        `${created} seats were saved before the error: ${e.message}. Refresh and retry to add remaining seats. Scheduled layouts cannot be changed.`,
+      );
+    } finally {
+      setBusy(false);
+      r.reload();
+    }
+  }
+  async function adminCancel() {
+    setBusy(true);
+    try {
+      const result = await api(`/bookings/${cancelId}/cancel`, {
+        method: "POST",
+        body: {},
+      });
+      setMessage(
+        `Booking #${result.data.booking_id}: ${result.data.status}. Payment: ${result.data.payment_status}.`,
+      );
+      setCancelConfirm(false);
+    } catch (e) {
+      fail(e);
+      setCancelConfirm(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="page-title">
+        <div className="eyebrow">Behind the scenes</div>
+        <h1>Studio administration</h1>
+        <p>
+          Manage your catalog, configure auditoriums, and schedule the next
+          great night.
+        </p>
+      </div>
+      <div className="admin-tabs">
+        {["overview", ...Object.keys(definitions), "bookings"].map((t) => (
+          <button
+            key={t}
+            className={tab === t ? "active" : ""}
+            onClick={() => changeTab(t)}
+          >
+            {title(t)}
+          </button>
+        ))}
+      </div>
+      <ErrorMessage message={error} />
+      {message && (
+        <div className="notice" role="status">
+          {message}
+        </div>
+      )}
+      <Resource resource={r}>
+        {(data) => {
+          const options = (type) =>
+            type === "movie"
+              ? data.movies.map((m) => [
+                  m.movie_id,
+                  `${m.title} (#${m.movie_id})`,
+                ])
+              : type === "theatre"
+                ? data.theatres.map((t) => [
+                    t.theatre_id,
+                    `${t.theatre_name} (#${t.theatre_id})`,
+                  ])
+                : data.auditoriums.map((a) => [
+                    a.auditorium_id,
+                    `${data.theatres.find((t) => t.theatre_id === a.theatre_id)?.theatre_name} · Audi ${a.audi_number} (#${a.auditorium_id})`,
+                  ]);
+          if (tab === "overview")
+            return (
+              <>
+                <div className="stats">
+                  {["movies", "theatres", "auditoriums", "shows"].map((t) => (
+                    <div className="panel stat" key={t}>
+                      <strong>{data[t].length}</strong>
+                      <p>{title(t)} in your catalog</p>
+                    </div>
+                  ))}
+                </div>
+                <section className="panel" style={{ marginTop: 24 }}>
+                  <h2>Set the stage</h2>
+                  <p>
+                    Create a movie and theatre, add an auditorium, configure its
+                    seats, then schedule a show. Seats become immutable once a
+                    show is scheduled. Show creation automatically generates
+                    priced, show-specific inventory.
+                  </p>
+                </section>
+              </>
+            );
+          if (tab === "bookings")
+            return (
+              <section className="panel">
+                <h2>Cancel a booking by reference</h2>
+                <p>
+                  Administrators can cancel eligible bookings. Customer history
+                  remains private; this interface does not expose an unsupported
+                  global booking list.
+                </p>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setCancelConfirm(true);
+                  }}
+                  style={{ maxWidth: 360, marginTop: 24 }}
+                >
+                  <label className="field">
+                    <span>Booking reference</span>
+                    <input
+                      value={cancelId}
+                      onChange={(e) => setCancelId(e.target.value)}
+                      pattern="[1-9][0-9]*"
+                      required
+                    />
+                  </label>
+                  <button className="button secondary">
+                    Review cancellation
+                  </button>
+                </form>
+                {cancelConfirm && (
+                  <ConfirmDialog
+                    title={`Cancel booking #${cancelId}?`}
+                    onClose={() => setCancelConfirm(false)}
+                    onConfirm={adminCancel}
+                    busy={busy}
+                  >
+                    This releases the customer's seats and records any simulated
+                    refund. Confirm only for an authorized cancellation request.
+                  </ConfirmDialog>
+                )}
+              </section>
+            );
+          const def = definitions[tab];
+          return (
+            <div className="admin-layout">
+              <section className="panel table-scroll">
+                <h2>
+                  {title(tab)}{" "}
+                  <span className="muted">({data[tab].length})</span>
+                </h2>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Record</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data[tab].map((row) => (
+                      <tr key={row[def.key]}>
+                        <td>{row[def.key]}</td>
+                        <td>
+                          {row.title ||
+                            row.theatre_name ||
+                            (tab === "auditoriums"
+                              ? `Audi ${row.audi_number} · Theatre #${row.theatre_id}`
+                              : tab === "seats"
+                                ? `${row.seat_number} · Audi #${row.auditorium_id}`
+                                : `${row.movie?.title} · ${new Date(row.start_time).toLocaleString()}`)}
+                        </td>
+                        <td>
+                          <button
+                            className="button secondary small"
+                            onClick={() => {
+                              setEdit(row);
+                              setError("");
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="button secondary small"
+                            onClick={() => setDeleting(row)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!data[tab].length && (
+                  <p className="hint">No records yet. Add your first one.</p>
+                )}
+              </section>
+              <div className="panel admin-form">
+                <h2>
+                  {edit ? "Edit" : "Create"} {tab.replace(/s$/, "")}
+                </h2>
+                <form
+                  key={tab + revision + (edit?.[def.key] || "new")}
+                  onSubmit={save}
+                >
+                  {def.fields.map(([name, label, type = "text"]) => {
+                    const optional =
+                      ["description", "genre", "poster_url"].includes(name) ||
+                      (name === "price" && edit);
+                    const immutable =
+                      edit &&
+                      ((tab === "seats" && name === "auditorium_id") ||
+                        (tab === "auditoriums" && name === "theatre_id") ||
+                        (tab === "shows" && name === "auditorium_id"));
+                    return (
+                      <label className="field" key={name}>
+                        <span>
+                          {label}
+                          {optional ? " (optional)" : ""}
+                        </span>
+                        {["movie", "theatre", "auditorium"].includes(type) ? (
+                          <select
+                            aria-label={label}
+                            name={name}
+                            required
+                            disabled={!!immutable}
+                            defaultValue={edit?.[name] || ""}
+                          >
+                            <option value="">Choose…</option>
+                            {options(type).map(([id, label]) => (
+                              <option key={id} value={id}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : type === "textarea" ? (
+                          <textarea
+                            name={name}
+                            defaultValue={edit?.[name] || ""}
+                          />
+                        ) : (
+                          <input
+                            name={name}
+                            type={type === "money" ? "number" : type}
+                            required={!optional}
+                            min={
+                              type === "money"
+                                ? "0.01"
+                                : type === "number"
+                                  ? "1"
+                                  : undefined
+                            }
+                            step={type === "money" ? "0.01" : undefined}
+                            defaultValue={
+                              type === "datetime-local" && edit?.[name]
+                                ? localInput(edit[name])
+                                : edit?.[name] || ""
+                            }
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                  <div className="actions">
+                    <button className="button" disabled={busy}>
+                      {busy
+                        ? "Saving…"
+                        : edit
+                          ? "Save changes"
+                          : "Create " + tab.replace(/s$/, "")}
+                    </button>
+                    {edit && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => setEdit(null)}
+                      >
+                        Cancel edit
+                      </button>
+                    )}
+                  </div>
+                </form>
+                {tab === "seats" && (
+                  <form onSubmit={grid} className="grid-form">
+                    <h2>Generate a seat grid</h2>
+                    <label className="field">
+                      <span>Grid auditorium</span>
+                      <select name="auditorium_id" aria-label="Grid auditorium" required>
+                        <option value="">Choose…</option>
+                        {options("auditorium").map(([id, label]) => (
+                          <option key={id} value={id}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Row labels</span>
+                      <input name="rows" defaultValue="A,B,C" required />
+                    </label>
+                    <label className="field">
+                      <span>Seats per row</span>
+                      <input
+                        name="columns"
+                        type="number"
+                        min="1"
+                        max="20"
+                        defaultValue="6"
+                        required
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Grid seat type</span>
+                      <select name="seat_type">
+                        <option>STANDARD</option>
+                        <option>PREMIUM</option>
+                      </select>
+                    </label>
+                    <button className="button secondary" disabled={busy}>
+                      Generate seats
+                    </button>
+                    <p className="hint">
+                      Each seat is saved separately. Existing seat numbers are
+                      skipped. Partial progress is reported if a request fails.
+                    </p>
+                  </form>
+                )}
+              </div>
+              {deleting && (
+                <div className="dialog-backdrop">
+                  <section
+                    className="dialog"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Delete record?"
+                  >
+                    <h2>Delete this record?</h2>
+                    <p style={{ marginTop: 14 }}>
+                      Records with show or booking dependencies cannot be
+                      deleted.
+                    </p>
+                    <div className="actions">
+                      <button
+                        autoFocus
+                        className="button secondary"
+                        onClick={() => setDeleting(null)}
+                      >
+                        Keep record
+                      </button>
+                      <button
+                        className="button danger"
+                        disabled={busy}
+                        onClick={remove}
+                      >
+                        Confirm delete
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              )}
+            </div>
+          );
+        }}
+      </Resource>
+    </>
+  );
+}

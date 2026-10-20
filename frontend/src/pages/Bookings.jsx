@@ -1,14 +1,465 @@
-import {useEffect,useRef,useState} from 'react';
-import {Link,useNavigate,useParams} from 'react-router-dom';
-import {ArrowLeft,CheckCircle2,Ticket,Clock3} from 'lucide-react';
-import {api} from '../api/client';
-import {useAuth} from '../contexts/AuthContext';
-import {useResource} from '../hooks/useResource';
-import {Resource,ErrorMessage,Empty,Status,ConfirmDialog} from '../components/UI';
-import {money,dateTime} from '../utils/format';
-export function Countdown({expiresAt,offset=0,onExpire}){const [now,setNow]=useState(Date.now()+offset),called=useRef(false);useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()+offset),1000);return()=>clearInterval(timer);},[offset]);const seconds=Math.max(0,Math.ceil((new Date(expiresAt).getTime()-now)/1000));useEffect(()=>{if(seconds===0&&!called.current){called.current=true;onExpire?.();}},[seconds,onExpire]);return <div className="countdown" role="timer"><Clock3 size={15} style={{display:'inline',marginRight:8}}/>{seconds?`Seats held for ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`:'Hold deadline reached — checking availability'}<p className="hint" style={{margin:'6px 0 0'}}>The server makes the final expiry decision.</p></div>;}
-export function Checkout(){const {id}=useParams(),{user}=useAuth(),navigate=useNavigate(),r=useResource(async()=>{const [b,c]=await Promise.all([api('/bookings/'+id),api('/config')]);return {booking:b.data,config:c.data,offset:new Date(c.data.server_time).getTime()-Date.now()};},id);const storage=`frame.payment.${user.user_id}.${id}`;const [attempt,setAttempt]=useState(()=>{try{return JSON.parse(sessionStorage.getItem(storage));}catch{return null;}}),[method,setMethod]=useState(attempt?.body.payment_method||'UPI'),[outcome,setOutcome]=useState(attempt?.body.outcome||'SUCCESS'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[deadline,setDeadline]=useState(false),inflight=useRef(false);
-  async function pay(){if(inflight.current)return;inflight.current=true;setBusy(true);setError('');setMessage('');const next=attempt||{key:crypto.randomUUID(),body:{payment_method:method,outcome}};setAttempt(next);sessionStorage.setItem(storage,JSON.stringify(next));try{const result=await api(`/bookings/${id}/payments`,{method:'POST',key:next.key,body:next.body});sessionStorage.removeItem(storage);setAttempt(null);if(result.data.booking.status==='CONFIRMED')navigate('/bookings/'+id,{replace:true});else{setMessage('Payment was declined in the simulation. Your seats remain held until the deadline. You may try a new attempt.');r.reload();}}catch(e){setError(e.message);if(e.status && e.code!=='RETRYABLE_CONFLICT'){sessionStorage.removeItem(storage);setAttempt(null);r.reload();}}finally{inflight.current=false;setBusy(false);}}
-  return <><Link to="/bookings" className="back-link"><ArrowLeft size={15}/>My bookings</Link><div className="page-title"><div className="eyebrow">One step from the big screen</div><h1>Complete your booking</h1></div><ErrorMessage message={error}/>{message&&<div className="notice" role="status">{message}</div>}<Resource resource={r}>{({booking:b,config,offset})=>b.status!=='PENDING'?<div className="panel"><Status value={b.status}/><h2 style={{marginTop:20}}>{b.status==='EXPIRED'?'Your hold has expired.':'This booking is no longer awaiting payment.'}</h2><p>No further payment will be submitted from this checkout.</p><div className="actions"><Link className="button" to={`/shows/${b.show_id}/seats`}>Choose seats again</Link><Link className="button secondary" to={'/bookings/'+id}>View booking</Link></div></div>:<div className="booking-layout"><section className="panel"><h2>{b.movie_title}</h2><p>{b.theatre_name} · {b.location} · Auditorium {b.audi_number}</p><p style={{marginTop:10}}>{dateTime(b.start_time)}</p><div className="section-head"><h2>Payment simulation</h2></div><p>This is a portfolio demonstration. No money will be charged. Never enter real card details.</p><ErrorMessage message={!config.payment_simulation?'Payment simulation is disabled on this server. You can view or cancel your pending booking.':''}/><div className="two-columns" style={{marginTop:22}}><label className="field"><span>Payment method</span><select disabled={!!attempt||busy} value={method} onChange={e=>setMethod(e.target.value)}><option value="UPI">UPI</option><option value="CARD">Card (simulation)</option><option value="NET_BANKING">Net banking</option></select></label><label className="field"><span>Simulation outcome</span><select disabled={!!attempt||busy} value={outcome} onChange={e=>setOutcome(e.target.value)}><option value="SUCCESS">Successful payment</option><option value="FAILED">Declined payment</option></select></label></div>{attempt&&<p className="hint">An attempt is pending a response. Retry uses the same payment identifier, including after a page refresh.</p>}<button className="button" onClick={pay} disabled={busy||deadline||!config.payment_simulation}>{busy?'Processing…':attempt?'Retry payment':'Simulate payment'}</button></section><aside className="panel"><h2>Booking summary</h2><Countdown expiresAt={b.expires_at} offset={offset} onExpire={()=>{setDeadline(true);r.reload();}}/>{b.seats.map(s=><div className="summary-line" key={s.show_seat_id}><span>{s.seat_number} · {s.seat_type}</span><span>{money(s.price)}</span></div>)}<div className="summary-line summary-total"><span>Total</span><strong>{money(b.total_amount)}</strong></div><Link className="text-link" to={'/bookings/'+id}>View or cancel this hold</Link></aside></div>}</Resource></>;}
-export function BookingDetails(){const {id}=useParams(),r=useResource(()=>api('/bookings/'+id).then(r=>r.data),id),[confirm,setConfirm]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');async function cancel(){if(busy)return;setBusy(true);try{const result=await api(`/bookings/${id}/cancel`,{method:'POST',body:{}});r.setData(result.data);setConfirm(false);}catch(e){setError(e.message);setConfirm(false);}finally{setBusy(false);}}return <div className="ticket"><Link className="back-link" to="/bookings"><ArrowLeft size={15}/>My bookings</Link><ErrorMessage message={error}/><Resource resource={r}>{b=><><div className="ticket-header">{b.status==='CONFIRMED'?<CheckCircle2 size={36}/>:<Ticket size={36}/>}<div><div className="eyebrow">Booking #{b.booking_id}</div><h1>{b.status==='CONFIRMED'?"You're going to the movies.":b.status==='CANCELLED'?'Booking cancelled':b.status==='EXPIRED'?'Your hold has expired':'Your seats are on hold'}</h1></div></div><section className="panel"><Status value={b.status}/><h2 style={{marginTop:24}}>{b.movie_title}</h2><dl className="ticket-meta"><div><dt>Cinema</dt><dd>{b.theatre_name}, {b.location}</dd></div><div><dt>Screening</dt><dd>{dateTime(b.start_time)}</dd></div><div><dt>Auditorium & seats</dt><dd>Auditorium {b.audi_number} · {b.seats.map(s=>s.seat_number).join(', ')}</dd></div><div><dt>Total & payment</dt><dd>{money(b.total_amount)} · {b.payment_status}</dd></div></dl>{b.payment_status==='REFUNDED'&&<div className="notice">Full simulated refund recorded. No real money moved.</div>}<p className="hint">Created {dateTime(b.created_at)}. Keep this reference for your booking history.</p><div className="actions">{b.status==='PENDING'&&<Link className="button" to={'/checkout/'+id}>Continue to checkout</Link>}{['PENDING','CONFIRMED'].includes(b.status)&&new Date(b.start_time)>new Date()&&<button className="button secondary" onClick={()=>setConfirm(true)}>Cancel booking</button>}{['EXPIRED','CANCELLED'].includes(b.status)&&<Link className="button" to={`/shows/${b.show_id}/seats`}>Choose seats again</Link>}</div></section>{confirm&&<ConfirmDialog title="Cancel this booking?" busy={busy} onClose={()=>setConfirm(false)} onConfirm={cancel}>Your seats will be released. A successful simulated payment will be marked refunded. This cannot be undone.</ConfirmDialog>}</>}</Resource></div>;}
-export function Bookings(){const [page,setPage]=useState(1),[filter,setFilter]=useState('all'),r=useResource(()=>api(`/bookings?page=${page}&limit=10`),page);return <><div className="page-title"><div className="eyebrow">Your cinema journal</div><h1>My bookings</h1><p>Upcoming nights out and stories you've already seen.</p></div><div className="admin-tabs">{['all','upcoming','past','cancelled'].map(f=><button key={f} className={filter===f?'active':''} onClick={()=>setFilter(f)}>{f[0].toUpperCase()+f.slice(1)}</button>)}</div><p className="hint">Filters apply to the current page of your history.</p><Resource resource={r}>{result=>{const bookings=result.data.filter(b=>filter==='all'||(filter==='cancelled'?b.status==='CANCELLED':filter==='past'?new Date(b.start_time)<new Date():new Date(b.start_time)>new Date()&&['PENDING','CONFIRMED'].includes(b.status)));return <>{bookings.length?bookings.map(b=><article key={b.booking_id} className="booking-card"><div><Status value={b.status}/><h3>{b.movie_title}</h3><p>{b.theatre_name} · {dateTime(b.start_time)}</p><p>Seats {b.seats.map(s=>s.seat_number).join(', ')} · {money(b.total_amount)}</p></div><Link className="button secondary" to={'/bookings/'+b.booking_id}>View booking #{b.booking_id}</Link></article>):<Empty title="No bookings to show"><Link className="text-link" to="/shows">Find your next screening</Link></Empty>}<div className="pagination"><button className="button secondary" disabled={page===1} onClick={()=>setPage(p=>p-1)}>Previous</button><span>Page {page}</span><button className="button secondary" disabled={page*10>=result.pagination.total} onClick={()=>setPage(p=>p+1)}>Next</button></div></>;}}</Resource></>;}
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, CheckCircle2, Ticket, Clock3 } from "lucide-react";
+import { api } from "../api/client";
+import { useAuth } from "../contexts/AuthContext";
+import { useResource } from "../hooks/useResource";
+import {
+  Resource,
+  ErrorMessage,
+  Empty,
+  Status,
+  ConfirmDialog,
+} from "../components/UI";
+import { money, dateTime } from "../utils/format";
+export function Countdown({ expiresAt, offset = 0, onExpire }) {
+  const [now, setNow] = useState(Date.now() + offset),
+    called = useRef(false);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now() + offset), 1000);
+    return () => clearInterval(timer);
+  }, [offset]);
+  const seconds = Math.max(
+    0,
+    Math.ceil((new Date(expiresAt).getTime() - now) / 1000),
+  );
+  useEffect(() => {
+    if (seconds === 0 && !called.current) {
+      called.current = true;
+      onExpire?.();
+    }
+  }, [seconds, onExpire]);
+  return (
+    <div className="countdown" role="timer">
+      <Clock3 size={15} style={{ display: "inline", marginRight: 8 }} />
+      {seconds
+        ? `Seats held for ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+        : "Hold deadline reached — checking availability"}
+      <p className="hint" style={{ margin: "6px 0 0" }}>
+        The server makes the final expiry decision.
+      </p>
+    </div>
+  );
+}
+export function Checkout() {
+  const { id } = useParams(),
+    { user } = useAuth(),
+    navigate = useNavigate(),
+    r = useResource(async () => {
+      const [b, c] = await Promise.all([
+        api("/bookings/" + id),
+        api("/config"),
+      ]);
+      return {
+        booking: b.data,
+        config: c.data,
+        offset: new Date(c.data.server_time).getTime() - Date.now(),
+      };
+    }, id);
+  const storage = `frame.payment.${user.user_id}.${id}`;
+  const [attempt, setAttempt] = useState(() => {
+      try {
+        return JSON.parse(sessionStorage.getItem(storage));
+      } catch {
+        return null;
+      }
+    }),
+    [method, setMethod] = useState(attempt?.body.payment_method || "UPI"),
+    [outcome, setOutcome] = useState(attempt?.body.outcome || "SUCCESS"),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [message, setMessage] = useState(""),
+    [deadline, setDeadline] = useState(false),
+    inflight = useRef(false);
+  async function pay() {
+    if (inflight.current) return;
+    inflight.current = true;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const next = attempt || {
+      key: crypto.randomUUID(),
+      body: { payment_method: method, outcome },
+    };
+    setAttempt(next);
+    sessionStorage.setItem(storage, JSON.stringify(next));
+    try {
+      const result = await api(`/bookings/${id}/payments`, {
+        method: "POST",
+        key: next.key,
+        body: next.body,
+      });
+      sessionStorage.removeItem(storage);
+      setAttempt(null);
+      if (result.data.booking.status === "CONFIRMED")
+        navigate("/bookings/" + id, { replace: true });
+      else {
+        setMessage(
+          "Payment was declined in the simulation. Your seats remain held until the deadline. You may try a new attempt.",
+        );
+        r.reload();
+      }
+    } catch (e) {
+      setError(e.message);
+      if (e.status && e.code !== "RETRYABLE_CONFLICT") {
+        sessionStorage.removeItem(storage);
+        setAttempt(null);
+        r.reload();
+      }
+    } finally {
+      inflight.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <Link to="/bookings" className="back-link">
+        <ArrowLeft size={15} />
+        My bookings
+      </Link>
+      <div className="page-title">
+        <div className="eyebrow">One step from the big screen</div>
+        <h1>Complete your booking</h1>
+      </div>
+      <ErrorMessage message={error} />
+      {message && (
+        <div className="notice" role="status">
+          {message}
+        </div>
+      )}
+      <Resource resource={r}>
+        {({ booking: b, config, offset }) =>
+          b.status !== "PENDING" ? (
+            <div className="panel">
+              <Status value={b.status} />
+              <h2 style={{ marginTop: 20 }}>
+                {b.status === "EXPIRED"
+                  ? "Your hold has expired."
+                  : "This booking is no longer awaiting payment."}
+              </h2>
+              <p>No further payment will be submitted from this checkout.</p>
+              <div className="actions">
+                <Link className="button" to={`/shows/${b.show_id}/seats`}>
+                  Choose seats again
+                </Link>
+                <Link className="button secondary" to={"/bookings/" + id}>
+                  View booking
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="booking-layout">
+              <section className="panel">
+                <h2>{b.movie_title}</h2>
+                <p>
+                  {b.theatre_name} · {b.location} · Auditorium {b.audi_number}
+                </p>
+                <p style={{ marginTop: 10 }}>{dateTime(b.start_time)}</p>
+                <div className="section-head">
+                  <h2>Payment simulation</h2>
+                </div>
+                <p>
+                  This is a portfolio demonstration. No money will be charged.
+                  Never enter real card details.
+                </p>
+                <ErrorMessage
+                  message={
+                    !config.payment_simulation
+                      ? "Payment simulation is disabled on this server. You can view or cancel your pending booking."
+                      : ""
+                  }
+                />
+                <div className="two-columns" style={{ marginTop: 22 }}>
+                  <label className="field">
+                    <span>Payment method</span>
+                    <select
+                      disabled={!!attempt || busy}
+                      value={method}
+                      onChange={(e) => setMethod(e.target.value)}
+                    >
+                      <option value="UPI">UPI</option>
+                      <option value="CARD">Card (simulation)</option>
+                      <option value="NET_BANKING">Net banking</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Simulation outcome</span>
+                    <select
+                      disabled={!!attempt || busy}
+                      value={outcome}
+                      onChange={(e) => setOutcome(e.target.value)}
+                    >
+                      <option value="SUCCESS">Successful payment</option>
+                      <option value="FAILED">Declined payment</option>
+                    </select>
+                  </label>
+                </div>
+                {attempt && (
+                  <p className="hint">
+                    An attempt is pending a response. Retry uses the same
+                    payment identifier, including after a page refresh.
+                  </p>
+                )}
+                <button
+                  className="button"
+                  onClick={pay}
+                  disabled={busy || deadline || !config.payment_simulation}
+                >
+                  {busy
+                    ? "Processing…"
+                    : attempt
+                      ? "Retry payment"
+                      : "Simulate payment"}
+                </button>
+              </section>
+              <aside className="panel">
+                <h2>Booking summary</h2>
+                <Countdown
+                  expiresAt={b.expires_at}
+                  offset={offset}
+                  onExpire={() => {
+                    setDeadline(true);
+                    r.reload();
+                  }}
+                />
+                {b.seats.map((s) => (
+                  <div className="summary-line" key={s.show_seat_id}>
+                    <span>
+                      {s.seat_number} · {s.seat_type}
+                    </span>
+                    <span>{money(s.price)}</span>
+                  </div>
+                ))}
+                <div className="summary-line summary-total">
+                  <span>Total</span>
+                  <strong>{money(b.total_amount)}</strong>
+                </div>
+                <Link className="text-link" to={"/bookings/" + id}>
+                  View or cancel this hold
+                </Link>
+              </aside>
+            </div>
+          )
+        }
+      </Resource>
+    </>
+  );
+}
+export function BookingDetails() {
+  const { id } = useParams(),
+    r = useResource(() => api("/bookings/" + id).then((r) => r.data), id),
+    [confirm, setConfirm] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  async function cancel() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await api(`/bookings/${id}/cancel`, {
+        method: "POST",
+        body: {},
+      });
+      r.setData(result.data);
+      setConfirm(false);
+    } catch (e) {
+      setError(e.message);
+      setConfirm(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="ticket">
+      <Link className="back-link" to="/bookings">
+        <ArrowLeft size={15} />
+        My bookings
+      </Link>
+      <ErrorMessage message={error} />
+      <Resource resource={r}>
+        {(b) => (
+          <>
+            <div className="ticket-header">
+              {b.status === "CONFIRMED" ? (
+                <CheckCircle2 size={36} />
+              ) : (
+                <Ticket size={36} />
+              )}
+              <div>
+                <div className="eyebrow">Booking #{b.booking_id}</div>
+                <h1>
+                  {b.status === "CONFIRMED"
+                    ? "You're going to the movies."
+                    : b.status === "CANCELLED"
+                      ? "Booking cancelled"
+                      : b.status === "EXPIRED"
+                        ? "Your hold has expired"
+                        : "Your seats are on hold"}
+                </h1>
+              </div>
+            </div>
+            <section className="panel">
+              <Status value={b.status} />
+              <h2 style={{ marginTop: 24 }}>{b.movie_title}</h2>
+              <dl className="ticket-meta">
+                <div>
+                  <dt>Cinema</dt>
+                  <dd>
+                    {b.theatre_name}, {b.location}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Screening</dt>
+                  <dd>{dateTime(b.start_time)}</dd>
+                </div>
+                <div>
+                  <dt>Auditorium & seats</dt>
+                  <dd>
+                    Auditorium {b.audi_number} ·{" "}
+                    {b.seats.map((s) => s.seat_number).join(", ")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Total & payment</dt>
+                  <dd>
+                    {money(b.total_amount)} · {b.payment_status}
+                  </dd>
+                </div>
+              </dl>
+              {b.payment_status === "REFUNDED" && (
+                <div className="notice">
+                  Full simulated refund recorded. No real money moved.
+                </div>
+              )}
+              <p className="hint">
+                Created {dateTime(b.created_at)}. Keep this reference for your
+                booking history.
+              </p>
+              <div className="actions">
+                {b.status === "PENDING" && (
+                  <Link className="button" to={"/checkout/" + id}>
+                    Continue to checkout
+                  </Link>
+                )}
+                {["PENDING", "CONFIRMED"].includes(b.status) &&
+                  new Date(b.start_time) > new Date() && (
+                    <button
+                      className="button secondary"
+                      onClick={() => setConfirm(true)}
+                    >
+                      Cancel booking
+                    </button>
+                  )}
+                {["EXPIRED", "CANCELLED"].includes(b.status) && (
+                  <Link className="button" to={`/shows/${b.show_id}/seats`}>
+                    Choose seats again
+                  </Link>
+                )}
+              </div>
+            </section>
+            {confirm && (
+              <ConfirmDialog
+                title="Cancel this booking?"
+                busy={busy}
+                onClose={() => setConfirm(false)}
+                onConfirm={cancel}
+              >
+                Your seats will be released. A successful simulated payment will
+                be marked refunded. This cannot be undone.
+              </ConfirmDialog>
+            )}
+          </>
+        )}
+      </Resource>
+    </div>
+  );
+}
+export function Bookings() {
+  const [page, setPage] = useState(1),
+    [filter, setFilter] = useState("all"),
+    r = useResource(() => api(`/bookings?page=${page}&limit=10`), page);
+  return (
+    <>
+      <div className="page-title">
+        <div className="eyebrow">Your cinema journal</div>
+        <h1>My bookings</h1>
+        <p>Upcoming nights out and stories you've already seen.</p>
+      </div>
+      <div className="admin-tabs">
+        {["all", "upcoming", "past", "cancelled"].map((f) => (
+          <button
+            key={f}
+            className={filter === f ? "active" : ""}
+            onClick={() => setFilter(f)}
+          >
+            {f[0].toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+      <p className="hint">Filters apply to the current page of your history.</p>
+      <Resource resource={r}>
+        {(result) => {
+          const bookings = result.data.filter(
+            (b) =>
+              filter === "all" ||
+              (filter === "cancelled"
+                ? b.status === "CANCELLED"
+                : filter === "past"
+                  ? new Date(b.start_time) < new Date()
+                  : new Date(b.start_time) > new Date() &&
+                    ["PENDING", "CONFIRMED"].includes(b.status)),
+          );
+          return (
+            <>
+              {bookings.length ? (
+                bookings.map((b) => (
+                  <article key={b.booking_id} className="booking-card">
+                    <div>
+                      <Status value={b.status} />
+                      <h3>{b.movie_title}</h3>
+                      <p>
+                        {b.theatre_name} · {dateTime(b.start_time)}
+                      </p>
+                      <p>
+                        Seats {b.seats.map((s) => s.seat_number).join(", ")} ·{" "}
+                        {money(b.total_amount)}
+                      </p>
+                    </div>
+                    <Link
+                      className="button secondary"
+                      to={"/bookings/" + b.booking_id}
+                    >
+                      View booking #{b.booking_id}
+                    </Link>
+                  </article>
+                ))
+              ) : (
+                <Empty title="No bookings to show">
+                  <Link className="text-link" to="/shows">
+                    Find your next screening
+                  </Link>
+                </Empty>
+              )}
+              <div className="pagination">
+                <button
+                  className="button secondary"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </button>
+                <span>Page {page}</span>
+                <button
+                  className="button secondary"
+                  disabled={page * 10 >= result.pagination.total}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </>
+          );
+        }}
+      </Resource>
+    </>
+  );
+}

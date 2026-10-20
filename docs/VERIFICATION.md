@@ -1,4 +1,20 @@
-# Verification — M1 and M2
+# Verification — M1, M2 and M3
+
+## M3 — 2026-10-20
+
+Environment: Windows PowerShell, project-local Node 24.22.0, Docker PostgreSQL 17, Chromium via Playwright. Existing M1/M2 data and volume were retained.
+
+- Backend: `docker compose exec -T backend node --test --test-concurrency=1`: **65 passed, 0 failed, 0 skipped**. Real isolated PostgreSQL integration suites ran, including all 64 M1/M2 tests and the public configuration regression.
+- Frontend: `npm test` (executed with local Node 24 and `node_modules/vitest/vitest.mjs run`): **14 passed, 0 failed**.
+- Browser: from backend, local Node 24 `--env-file=.env scripts/e2e.js` (equivalent to frontend `npm run test:e2e`): **8 passed, 0 failed**. Runner created a randomly named PostgreSQL database, applied migrations, seeded catalog and a generated admin, ran Express/Vite and Chromium, then dropped only its own test database.
+- Browser journeys: registration/login; reserve/pay/confirmation/history/cancel/refund; two-customer conflict; server-expired hold; failed payment followed by success; lost successful response and refresh without double charge; full admin screening setup followed by customer reservation; authorization/session recovery; desktop/mobile rendering. Database assertions verify persisted outcomes.
+- Earlier browser failures exposed fixture timing/numbering issues and inaccessible admin select names. These were fixed before the final passing run.
+- Production build: `npm run build` passed on Windows and during the Docker multi-stage build.
+- `docker compose up --build -d --wait` passed; PostgreSQL, Express and Nginx all healthy. Repeated startup kept existing data and reused demo seed records.
+- Live HTTP checks returned 200 for frontend `/`, SPA `/movies`, proxied `/api/movies`, `/api/config`, `/posters/0.svg`, and backend `/health`.
+- Actual browser screenshots are in `docs/screenshots/`; mobile catalog and desktop seat selection were visually inspected. Browser checks assert no horizontal overflow, failed poster decoding or uncaught page errors.
+
+Payments/refunds are simulation only. This is local integration verification, not production load, security or real-payment certification. No M4 infrastructure was added.
 
 ## M2 — 2026-10-19
 
